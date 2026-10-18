@@ -72,8 +72,9 @@ git clone https://github.com/cxykevin/astrbot_plugin_linkpass.git
 
 ## 限制
 
-- 普通回复只处理模型结果（`result.is_model_result()`），指令回复不经过这里的改写；
-  但目标会话内的 `Context.send_message` 直发文本（含主动消息）也会被转义。
+- 目标会话内 `on_decorating_result` 拿到的结果都会处理（包括被标记为
+  `GENERAL_RESULT` 的普通回复）；`Context.send_message` 直发文本（含主动消息）
+  也会被转义。
 - 转义后的链接按纯文本发送，是否能点击取决于平台；本插件的目标就是让它不被识别为链接。
 
 ## 开发者自测

@@ -301,10 +301,8 @@ class LinkPassPlugin(Star):
         if result is None or not result.chain:
             return
 
-        # 普通流水线只处理模型输出；直发消息由 Context.send_message 补丁处理。
-        if not result.is_model_result():
-            return
-
+        # 目标会话内的所有结果都处理：不同 AstrBot / 平台组合下，
+        # 普通回复也可能被标记为 GENERAL_RESULT，不能只认 LLM_RESULT。
         changed = _escape_chain(result)
 
         if changed:
