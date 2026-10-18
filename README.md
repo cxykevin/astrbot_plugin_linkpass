@@ -65,8 +65,10 @@ git clone https://github.com/cxykevin/astrbot_plugin_linkpass.git
   因此既保持流式输出，也不会把跨 chunk 的链接拆坏。
 - **直发消息**：包装 `Context.send_message`，覆盖 `send_message_to_user`、主动消息和 cron
   等不经过 `on_decorating_result` 的路径。
+- **工具结果直发**：包装各平台 `AstrMessageEvent.send`，覆盖 `tool_call_result` 等
+  直接调用 `event.send()` 发送的内容（webchat 的工具结果走这条路径）。
 - **reasoning / think 段**也会转义，避免思考过程里展示的链接被平台识别。
-- 只处理 `target_umos` 命中的会话；插件停用、卸载或重载时会自动还原两个补丁。
+- 只处理 `target_umos` 命中的会话；插件停用、卸载或重载时会自动还原所有补丁。
 
 ## 限制
 

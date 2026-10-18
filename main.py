@@ -35,6 +35,8 @@ _ACTIVE_MARKER = "_linkpass_active_plugin"
 _STREAM_WRAPPED_EXTRA = "_linkpass_stream_wrapped"
 _CONTEXT_PATCH_MARKER = "_linkpass_original_send_message"
 _CONTEXT_ACTIVE_MARKER = "_linkpass_active_context_plugin"
+_EVENT_SEND_PATCH_MARKER = "_linkpass_original_event_send"
+_EVENT_SEND_WRAPPED_MARKER = "_linkpass_event_send_wrapped"
 
 
 def _install_set_result_patch() -> None:
@@ -100,6 +102,58 @@ def _uninstall_send_message_patch() -> None:
         return
     Context.send_message = original
     delattr(Context, _CONTEXT_PATCH_MARKER)
+
+
+def _iter_event_classes() -> list[type]:
+    """返回 ``AstrMessageEvent`` 及其全部已加载子类。"""
+    classes: list[type] = []
+    stack = [AstrMessageEvent]
+    while stack:
+        cls = stack.pop()
+        classes.append(cls)
+        stack.extend(cls.__subclasses__())
+    return classes
+
+
+def _install_event_send_patch() -> None:
+    """包装各平台消息事件的 ``send``，过滤工具结果等直接发送。
+
+    ``astr_agent_run_util`` 在 webchat 下会把工具调用结果直接
+    ``await event.send(chain)``，这条路径同样不经过
+    ``on_decorating_result`` 和 ``Context.send_message``。
+    """
+    for cls in _iter_event_classes():
+        if "send" not in cls.__dict__:
+            continue
+        original = cls.__dict__["send"]
+        if getattr(original, _EVENT_SEND_WRAPPED_MARKER, False):
+            continue
+
+        async def patched_send(self, message, *args, _original=original, **kwargs):
+            plugin = getattr(AstrMessageEvent, _ACTIVE_MARKER, None)
+            if plugin is not None and isinstance(message, MessageChain):
+                try:
+                    plugin._filter_outgoing_message(
+                        self.unified_msg_origin,
+                        message,
+                    )
+                except Exception:
+                    logger.exception("linkpass: 过滤直发消息失败，降级为原样发送")
+            return await _original(self, message, *args, **kwargs)
+
+        setattr(patched_send, _EVENT_SEND_WRAPPED_MARKER, True)
+        setattr(cls, _EVENT_SEND_PATCH_MARKER, original)
+        cls.send = patched_send
+
+
+def _uninstall_event_send_patch() -> None:
+    """恢复所有被包装的平台事件 ``send``。"""
+    for cls in _iter_event_classes():
+        original = getattr(cls, _EVENT_SEND_PATCH_MARKER, None)
+        if original is None:
+            continue
+        cls.send = original
+        delattr(cls, _EVENT_SEND_PATCH_MARKER)
 
 
 def _escape_chain(chain: MessageChain) -> int:
@@ -194,8 +248,9 @@ class LinkPassPlugin(Star):
 
     只对 ``target_umos`` 中列出的会话生效。普通回复走
     ``on_decorating_result``，流式输出靠 ``AstrMessageEvent.set_result``
-    补丁，``send_message_to_user`` / 主动消息则走 ``Context.send_message``
-    补丁；三条路径都会在发送前转义 ``Plain`` 文本。
+    补丁，``send_message_to_user`` / 主动消息走 ``Context.send_message``
+    补丁，工具结果等直发走 ``AstrMessageEvent.send`` 补丁；这些路径都会在
+    发送前转义 ``Plain`` 文本。
     """
 
     def __init__(self, context: Context, config: Mapping | None = None) -> None:
@@ -208,6 +263,7 @@ class LinkPassPlugin(Star):
         setattr(Context, _CONTEXT_ACTIVE_MARKER, self)
         _install_set_result_patch()
         _install_send_message_patch()
+        _install_event_send_patch()
 
         if not self._enabled():
             logger.info("linkpass: 插件已禁用，不处理任何消息。")
@@ -233,6 +289,7 @@ class LinkPassPlugin(Star):
         if getattr(Context, _CONTEXT_ACTIVE_MARKER, None) is self:
             setattr(Context, _CONTEXT_ACTIVE_MARKER, None)
             _uninstall_send_message_patch()
+        _uninstall_event_send_patch()
 
     @filter.on_decorating_result()
     async def escape_links(self, event: AstrMessageEvent) -> None:
@@ -258,7 +315,7 @@ class LinkPassPlugin(Star):
             )
 
     def _filter_outgoing_message(self, session, chain: MessageChain) -> None:
-        """过滤 ``Context.send_message`` 直发的消息链。"""
+        """过滤直发消息链（Context / 平台事件 send）。"""
         if not self._enabled():
             return
         umo = session if isinstance(session, str) else str(session)
