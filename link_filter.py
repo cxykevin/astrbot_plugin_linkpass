@@ -151,7 +151,146 @@ _FILE_EXTENSIONS = frozenset(
 )
 
 _LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
-_TLD = r"(?:[A-Za-z]{2,63}|xn--[A-Za-z0-9-]{2,59})"
+
+#: 常见后缀白名单。宁可误杀也不放过，命中这些后缀就按域名处理。
+_COMMON_TLDS = (
+    # 通用
+    "com",
+    "net",
+    "org",
+    "edu",
+    "gov",
+    "mil",
+    "int",
+    "info",
+    "biz",
+    "name",
+    "pro",
+    "aero",
+    "coop",
+    "jobs",
+    "mobi",
+    "tel",
+    "asia",
+    "cat",
+    "post",
+    "xxx",
+    # 常见国家/地区
+    "cn",
+    "hk",
+    "tw",
+    "sg",
+    "my",
+    "jp",
+    "kr",
+    "uk",
+    "us",
+    "ca",
+    "au",
+    "nz",
+    "de",
+    "fr",
+    "ru",
+    "ua",
+    "br",
+    "mx",
+    "tr",
+    "in",
+    "eu",
+    # 常见新后缀 / 技术后缀
+    "io",
+    "ai",
+    "app",
+    "dev",
+    "top",
+    "site",
+    "online",
+    "store",
+    "shop",
+    "tech",
+    "cloud",
+    "me",
+    "tv",
+    "cc",
+    "co",
+    "club",
+    "live",
+    "news",
+    "blog",
+    "wiki",
+    "link",
+    "space",
+    "website",
+    "fun",
+    "icu",
+    "vip",
+    "work",
+    "art",
+    "design",
+    "email",
+    "group",
+    "network",
+    "digital",
+    "media",
+    "social",
+    "agency",
+    "studio",
+    "software",
+    "systems",
+    "solutions",
+    "services",
+    "tools",
+    "games",
+    "game",
+    "market",
+    "money",
+    "finance",
+    "bank",
+    "insurance",
+    "travel",
+    "hotel",
+    "food",
+    "restaurant",
+    "health",
+    "care",
+    "education",
+    "school",
+    "university",
+    "government",
+    "law",
+    "museum",
+    # 常见二级后缀（必须排在对应的单段后缀之前）
+    "com.cn",
+    "net.cn",
+    "org.cn",
+    "gov.cn",
+    "edu.cn",
+    "ac.cn",
+    "com.hk",
+    "com.tw",
+    "com.sg",
+    "com.my",
+    "com.au",
+    "net.au",
+    "org.au",
+    "co.nz",
+    "co.uk",
+    "org.uk",
+    "ac.uk",
+    "co.jp",
+    "ne.jp",
+    "or.jp",
+    "co.kr",
+    "com.br",
+    "com.mx",
+    "com.tr",
+    "com.ru",
+    "com.ua",
+)
+_TLD_ALTERNATION = "|".join(
+    re.escape(tld) for tld in sorted(_COMMON_TLDS, key=len, reverse=True)
+)
+_TLD = rf"(?:{_TLD_ALTERNATION}|xn--[A-Za-z0-9-]{{2,59}})"
 _DOMAIN_HOST = rf"(?:{_LABEL}\.)+{_TLD}"
 _IPV4 = r"(?:\d{1,3}\.){3}\d{1,3}"
 
@@ -189,7 +328,9 @@ _DOMAIN_RE = re.compile(
     rf"(?P<host>{_DOMAIN_HOST}|{_IPV4})"
     rf"(?P<port>:\d{{1,5}})?"
     rf"(?P<rest>[/?#]{_URL_TAIL}*)?"
-    rf"(?![A-Za-z0-9@-])"
+    # 域名后面允许紧跟 "-"（例如仓库名 1503dev.top-static-page），
+    # 但不允许继续接字母/数字/@，避免把标识符拆错。
+    rf"(?![A-Za-z0-9@])"
 )
 
 

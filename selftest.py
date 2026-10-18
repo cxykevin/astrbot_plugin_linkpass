@@ -55,6 +55,14 @@ def main() -> int:
         ("大写 scheme", "HTTPS://Example.COM", "Example\\.COM"),
         ("裸域名", "example.com", "example\\.com"),
         ("裸域名带路径", "www.example.com/a", "www\\.example\\.com/a"),
+        (
+            "域名后接连字符的仓库名",
+            "1503dev.top-static-page",
+            "1503dev\\.top-static-page",
+        ),
+        ("常见后缀 cn", "example.cn", "example\\.cn"),
+        ("常见二级后缀 com.cn", "example.com.cn", "example\\.com\\.cn"),
+        ("后缀后接横线", "foo.io-bar", "foo\\.io-bar"),
         ("Markdown 链接", "[官网](https://example.com)", "[官网](example\\.com)"),
         ("中文紧邻", "看https://example.com吧", "看example\\.com吧"),
         ("中文句号", "访问https://example.com。", "访问example\\.com。"),
@@ -116,17 +124,17 @@ def main() -> int:
     check(
         "流式跨 chunk 邮箱",
         stream_escape(["user@exam", "ple.com 好"]),
-        ("user@example\\.com 好"),
+        "user@example\\.com 好",
     )
     check(
         "流式跨 chunk IPv6",
         stream_escape(["2001:db", "8::1 好"]),
-        ("2001\\:db8\\:\\:1 好"),
+        "2001\\:db8\\:\\:1 好",
     )
     check(
         "流式末尾无边界",
         stream_escape(["example", ".com"]),
-        ("example\\.com"),
+        "example\\.com",
     )
     check(
         "流式普通文本",
