@@ -16,9 +16,6 @@ import re
 #: 出现在链接末尾、属于正文标点的字符（匹配后裁掉）。
 _TRAILING_PUNCT = ".,;:!?。，；：！？、"
 
-#: 零宽空格：Markdown 会把 ``\.`` 还原成 ``.``，插入它可防止再次被 linkify。
-ZERO_WIDTH_SPACE = "\u200b"
-
 #: 常见文件后缀。裸域名（没有 scheme）如果以这些后缀结尾，按文件名处理，不转义。
 _FILE_EXTENSIONS = frozenset(
     {
@@ -286,7 +283,7 @@ def _escape_bare_ipv6(match: re.Match[str]) -> str:
         ipaddress.IPv6Address(core)
     except ValueError:
         return addr
-    escaped = core.replace(":", "\\:" + ZERO_WIDTH_SPACE)
+    escaped = core.replace(":", "\\:")
     return f"{escaped}%{scope}" if scope_sep else escaped
 
 
@@ -302,19 +299,19 @@ def _escape_bare_domain(match: re.Match[str]) -> str:
 
 
 def _escape_host_text(host: str) -> str:
-    """转义 host：域名/IPv4 加点，IPv6 加冒号，并插入零宽空格。"""
+    """转义 host：域名/IPv4 加点，IPv6 加冒号。"""
     if host.startswith("[") and host.endswith("]"):
         inner = host[1:-1]
         if ":" in inner:
-            return "[" + inner.replace(":", "\\:" + ZERO_WIDTH_SPACE) + "]"
-        return "[" + inner.replace(".", "\\." + ZERO_WIDTH_SPACE) + "]"
+            return "[" + inner.replace(":", "\\:") + "]"
+        return "[" + inner.replace(".", "\\.") + "]"
 
     core, scope_sep, scope = host.partition("%")
     try:
         ipaddress.IPv6Address(core)
     except ValueError:
-        return host.replace(".", "\\." + ZERO_WIDTH_SPACE)
-    escaped = core.replace(":", "\\:" + ZERO_WIDTH_SPACE)
+        return host.replace(".", "\\.")
+    escaped = core.replace(":", "\\:")
     return f"{escaped}%{scope}" if scope_sep else escaped
 
 
@@ -361,7 +358,7 @@ def _escape_query_marker(text: str) -> str:
         index = text.find("?", index + 1)
     if index < 0:
         return text
-    return text[:index] + "\\?" + ZERO_WIDTH_SPACE + text[index + 1 :]
+    return text[:index] + "\\?" + text[index + 1 :]
 
 
 def _trim_trailing_punct(token: str) -> str:

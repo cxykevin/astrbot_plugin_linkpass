@@ -29,10 +29,12 @@ from astrbot.core.message.message_event_result import (
 
 from .link_filter import StreamingLinkEscaper, escape_links_in_text
 
-#: 挂在 AstrMessageEvent 类上的补丁标记 / 当前生效的插件实例。
+#: 挂在 AstrMessageEvent / Context 类上的补丁标记 / 当前生效的插件实例。
 _PATCH_MARKER = "_linkpass_original_set_result"
 _ACTIVE_MARKER = "_linkpass_active_plugin"
 _STREAM_WRAPPED_EXTRA = "_linkpass_stream_wrapped"
+_CONTEXT_PATCH_MARKER = "_linkpass_original_send_message"
+_CONTEXT_ACTIVE_MARKER = "_linkpass_active_context_plugin"
 
 
 def _install_set_result_patch() -> None:
@@ -66,22 +68,78 @@ def _uninstall_set_result_patch() -> None:
     delattr(AstrMessageEvent, _PATCH_MARKER)
 
 
+def _install_send_message_patch() -> None:
+    """包装 ``Context.send_message``，过滤主动发送/工具直发的文本。
+
+    ``send_message_to_user``、cron 主动消息等路径不会经过
+    ``on_decorating_result``，而是直接调用 ``Context.send_message``。
+    这里在真正交给平台适配器之前改写 ``Plain`` 组件。
+    """
+    if hasattr(Context, _CONTEXT_PATCH_MARKER):
+        return
+
+    original = Context.send_message
+    setattr(Context, _CONTEXT_PATCH_MARKER, original)
+
+    async def patched_send_message(self, session, message_chain):
+        plugin = getattr(Context, _CONTEXT_ACTIVE_MARKER, None)
+        if plugin is not None and isinstance(message_chain, MessageChain):
+            try:
+                plugin._filter_outgoing_message(session, message_chain)
+            except Exception:
+                logger.exception("linkpass: 过滤主动发送消息失败，降级为原样发送")
+        return await original(self, session, message_chain)
+
+    Context.send_message = patched_send_message
+
+
+def _uninstall_send_message_patch() -> None:
+    """撤销 ``Context.send_message`` 补丁。"""
+    original = getattr(Context, _CONTEXT_PATCH_MARKER, None)
+    if original is None:
+        return
+    Context.send_message = original
+    delattr(Context, _CONTEXT_PATCH_MARKER)
+
+
+def _escape_chain(chain: MessageChain) -> int:
+    """转义消息链中所有 ``Plain`` 文本，返回改动的组件数。"""
+    changed = 0
+    for comp in chain.chain or []:
+        if not isinstance(comp, Plain) or not comp.text:
+            continue
+        escaped = escape_links_in_text(comp.text)
+        if escaped != comp.text:
+            comp.text = escaped
+            changed += 1
+    return changed
+
+
 def _wrap_streaming_result(event: AstrMessageEvent, result) -> None:
-    """命中目标 UMO 时，把流式结果包成带链接转义的生成器。"""
+    """命中目标 UMO 时，处理流式或最终结果链。"""
     plugin = getattr(AstrMessageEvent, _ACTIVE_MARKER, None)
     if plugin is None or not isinstance(result, MessageEventResult):
         return
-    if result.result_content_type != ResultContentType.STREAMING_RESULT:
-        return
-    if result.async_stream is None:
-        return
     if not plugin._enabled() or not plugin._is_target(event.unified_msg_origin):
         return
-    if event.get_extra(_STREAM_WRAPPED_EXTRA, False):
+
+    if result.result_content_type == ResultContentType.STREAMING_RESULT:
+        if result.async_stream is None:
+            return
+        if event.get_extra(_STREAM_WRAPPED_EXTRA, False):
+            return
+
+        event.set_extra(_STREAM_WRAPPED_EXTRA, True)
+        result.async_stream = _filtered_stream(result.async_stream)
         return
 
-    event.set_extra(_STREAM_WRAPPED_EXTRA, True)
-    result.async_stream = _filtered_stream(result.async_stream)
+    # 最终结果链同样可能在流式结束后被平台或插件再次使用。
+    if result.result_content_type in (
+        ResultContentType.LLM_RESULT,
+        ResultContentType.AGENT_RUNNER_ERROR,
+        ResultContentType.STREAMING_FINISH,
+    ):
+        _escape_chain(result)
 
 
 async def _filtered_stream(
@@ -134,12 +192,10 @@ async def _filtered_stream(
 class LinkPassPlugin(Star):
     """LinkPass · QQ 群助手链接转义。
 
-    只对 ``target_umos`` 中列出的会话生效，且只处理模型产生的消息结果
-    （``result.is_model_result()``），不会改动指令、插件主动发送的普通消息。
-
-    流式输出不会经过 ``on_decorating_result``（respond stage 直接消费
-    ``async_stream``），因此启动时会把 ``AstrMessageEvent.set_result``
-    包一层：命中 UMO 的流式生成器会被替换成逐段转义后的版本。
+    只对 ``target_umos`` 中列出的会话生效。普通回复走
+    ``on_decorating_result``，流式输出靠 ``AstrMessageEvent.set_result``
+    补丁，``send_message_to_user`` / 主动消息则走 ``Context.send_message``
+    补丁；三条路径都会在发送前转义 ``Plain`` 文本。
     """
 
     def __init__(self, context: Context, config: Mapping | None = None) -> None:
@@ -147,9 +203,11 @@ class LinkPassPlugin(Star):
         self.plugin_config = config if isinstance(config, Mapping) else {}
 
     async def initialize(self) -> None:
-        """启动时挂上流式结果补丁，并打印一次生效范围。"""
+        """启动时挂上流式结果与直发消息补丁，并打印一次生效范围。"""
         setattr(AstrMessageEvent, _ACTIVE_MARKER, self)
+        setattr(Context, _CONTEXT_ACTIVE_MARKER, self)
         _install_set_result_patch()
+        _install_send_message_patch()
 
         if not self._enabled():
             logger.info("linkpass: 插件已禁用，不处理任何消息。")
@@ -168,10 +226,13 @@ class LinkPassPlugin(Star):
             )
 
     async def terminate(self) -> None:
-        """插件停用、卸载或重载时撤销 ``set_result`` 补丁。"""
+        """插件停用、卸载或重载时撤销所有补丁。"""
         if getattr(AstrMessageEvent, _ACTIVE_MARKER, None) is self:
             setattr(AstrMessageEvent, _ACTIVE_MARKER, None)
             _uninstall_set_result_patch()
+        if getattr(Context, _CONTEXT_ACTIVE_MARKER, None) is self:
+            setattr(Context, _CONTEXT_ACTIVE_MARKER, None)
+            _uninstall_send_message_patch()
 
     @filter.on_decorating_result()
     async def escape_links(self, event: AstrMessageEvent) -> None:
@@ -183,24 +244,33 @@ class LinkPassPlugin(Star):
         if result is None or not result.chain:
             return
 
-        # 仅处理模型输出，避免误改指令回复和插件主动发送的消息。
+        # 普通流水线只处理模型输出；直发消息由 Context.send_message 补丁处理。
         if not result.is_model_result():
             return
 
-        changed = 0
-        for comp in result.chain:
-            if not isinstance(comp, Plain) or not comp.text:
-                continue
-            escaped = escape_links_in_text(comp.text)
-            if escaped != comp.text:
-                comp.text = escaped
-                changed += 1
+        changed = _escape_chain(result)
 
         if changed:
             logger.debug(
                 "linkpass: 已转义 %d 段文本（UMO=%s）。",
                 changed,
                 event.unified_msg_origin,
+            )
+
+    def _filter_outgoing_message(self, session, chain: MessageChain) -> None:
+        """过滤 ``Context.send_message`` 直发的消息链。"""
+        if not self._enabled():
+            return
+        umo = session if isinstance(session, str) else str(session)
+        if not self._is_target(umo):
+            return
+
+        changed = _escape_chain(chain)
+        if changed:
+            logger.debug(
+                "linkpass: 已转义 %d 段直发文本（UMO=%s）。",
+                changed,
+                umo,
             )
 
     def _enabled(self) -> bool:

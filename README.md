@@ -1,7 +1,7 @@
 # astrbot_plugin_linkpass
 
 > 针对指定 UMO 的 AI 回复转义链接，避免被 QQ 群助手拦截。
-> **只改模型输出，不改指令回复、插件消息或其他会话。**
+> **只改目标会话里发出的文本；不改指令回复或其他会话。**
 
 ![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D%204.0.0-blue)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
@@ -27,10 +27,6 @@
 - query 串前的 `?` 也加 `\`，例如 `a\?x=1`；
 - 路径、查询串内容、端口保持不变；
 - 常见文件名（如 `notes.txt`）不会被误判成域名。
-
-> 实际发出的文本会在 `\.`、`\:`、`\?` 后插入一个不可见零宽空格（U+200B），
-> 防止 Markdown 渲染器或 linkifier 把转义还原成 `.` 后重新识别成链接。
-> 因此复制出来的链接可能无法直接打开，这是有意的“宁肯错杀”策略。
 
 ## 安装与配置
 
@@ -67,13 +63,15 @@ git clone https://github.com/cxykevin/astrbot_plugin_linkpass.git
 - **流式回复**：包装 `AstrMessageEvent.set_result`，替换 `STREAMING_RESULT` 的 `async_stream`。
   转义器只缓冲最后一个可能仍在延伸的 ASCII token，遇到空白、中文或括号就立即发出，
   因此既保持流式输出，也不会把跨 chunk 的链接拆坏。
+- **直发消息**：包装 `Context.send_message`，覆盖 `send_message_to_user`、主动消息和 cron
+  等不经过 `on_decorating_result` 的路径。
 - **reasoning / think 段**也会转义，避免思考过程里展示的链接被平台识别。
-- 只处理 `target_umos` 命中的会话，且只处理模型结果；指令回复和插件主动消息不受影响。
-- 插件停用、卸载或重载时会自动还原 `set_result` 补丁。
+- 只处理 `target_umos` 命中的会话；插件停用、卸载或重载时会自动还原两个补丁。
 
 ## 限制
 
-- 只处理 **LLM 结果**（`result.is_model_result()`），不会改动指令回复和插件主动发送的消息。
+- 普通回复只处理模型结果（`result.is_model_result()`），指令回复不经过这里的改写；
+  但目标会话内的 `Context.send_message` 直发文本（含主动消息）也会被转义。
 - 转义后的链接按纯文本发送，是否能点击取决于平台；本插件的目标就是让它不被识别为链接。
 
 ## 开发者自测

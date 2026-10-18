@@ -9,6 +9,6 @@
         "description": "需要过滤的 UMO 列表",
         "type": "list",
         "default": [],
-        "hint": "只处理这些会话中的 AI 输出。UMO 格式为 platform:message_type:session_id，例如 aiocqhttp:GroupMessage:123456789。在目标会话发送 AstrBot 内置的 /sid 指令可查看当前会话的 UMO。留空则不会过滤任何会话。"
+        "hint": "只处理这些会话中的 AI 输出、直发消息与主动消息。UMO 格式为 platform:message_type:session_id，例如 aiocqhttp:GroupMessage:123456789。在目标会话发送 AstrBot 内置的 /sid 指令可查看当前会话的 UMO。留空则不会过滤任何会话。"
     }
 }
