@@ -89,30 +89,46 @@ async def _filtered_stream(
 ) -> AsyncGenerator[MessageChain, None]:
     """逐 chunk 转义流式文本，并保留非文本组件。
 
-    只缓冲最后一个可能仍在延伸的 ASCII token；遇到空白、中文或括号就
-    把前面的内容转义后立即发出，因此不会把跨 chunk 的链接拆坏。
+    reasoning / think 段与普通回复分开缓冲，避免两段文本被拼到一起；
+    两段都会转义，因此思考过程里出现的链接也不会漏掉。
     """
-    escaper = StreamingLinkEscaper()
+    escapers = {
+        "plain": StreamingLinkEscaper(),
+        "reasoning": StreamingLinkEscaper(),
+    }
+    current = "plain"
+
+    def text_chain(kind: str, text: str) -> MessageChain:
+        chain = MessageChain().message(text)
+        if kind == "reasoning":
+            chain.type = "reasoning"
+        return chain
 
     async for chain in stream:
-        # reasoning / audio_chunk 等非普通文本链原样透传。
-        if chain.type not in (None, "plain"):
-            for text in escaper.flush():
-                yield MessageChain().message(text)
+        # audio_chunk 的 Plain 是音频 base64，不能当文本处理。
+        if chain.type == "audio_chunk":
+            for text in escapers[current].flush():
+                yield text_chain(current, text)
             yield chain
             continue
 
+        kind = "reasoning" if chain.type == "reasoning" else "plain"
+        if kind != current:
+            for text in escapers[current].flush():
+                yield text_chain(current, text)
+            current = kind
+
         for comp in chain.chain or []:
             if isinstance(comp, Plain):
-                for text in escaper.feed(comp.text or ""):
-                    yield chain.derive([Plain(text)])
+                for text in escapers[kind].feed(comp.text or ""):
+                    yield text_chain(kind, text)
             else:
-                for text in escaper.flush():
-                    yield chain.derive([Plain(text)])
+                for text in escapers[kind].flush():
+                    yield text_chain(kind, text)
                 yield chain.derive([comp])
 
-    for text in escaper.flush():
-        yield MessageChain().message(text)
+    for text in escapers[current].flush():
+        yield text_chain(current, text)
 
 
 class LinkPassPlugin(Star):

@@ -17,7 +17,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from link_filter import StreamingLinkEscaper, escape_links_in_text  # noqa: E402
+from link_filter import (  # noqa: E402
+    ZERO_WIDTH_SPACE,
+    StreamingLinkEscaper,
+    escape_links_in_text,
+)
 
 FAILURES: list[str] = []
 CHECKS = 0
@@ -33,6 +37,15 @@ def check(name: str, actual: str, expected: str) -> None:
         print(f"       expected: {expected!r}")
         print(f"       actual  : {actual!r}")
         FAILURES.append(name)
+
+
+def with_zw(text: str) -> str:
+    """给期望文本中的转义分隔符补上零宽空格。"""
+    return (
+        text.replace("\\.", "\\." + ZERO_WIDTH_SPACE)
+        .replace("\\:", "\\:" + ZERO_WIDTH_SPACE)
+        .replace("\\?", "\\?" + ZERO_WIDTH_SPACE)
+    )
 
 
 def main() -> int:
@@ -86,11 +99,16 @@ def main() -> int:
     ]
 
     for name, source, expected in cases:
-        check(name, escape_links_in_text(source), expected)
+        check(name, escape_links_in_text(source), with_zw(expected))
 
     # 幂等性：转义后的文本再次处理不应继续变化。
     for name, source, expected in cases:
-        check(f"{name}（幂等）", escape_links_in_text(expected), expected)
+        escaped_expected = with_zw(expected)
+        check(
+            f"{name}（幂等）",
+            escape_links_in_text(escaped_expected),
+            escaped_expected,
+        )
 
     def stream_escape(chunks: list[str]) -> str:
         escaper = StreamingLinkEscaper()
@@ -103,22 +121,22 @@ def main() -> int:
     check(
         "流式跨 chunk 域名",
         stream_escape(["看 https://exa", "mple.com/a?x=1 好"]),
-        "看 example\\.com/a\\?x=1 好",
+        with_zw("看 example\\.com/a\\?x=1 好"),
     )
     check(
         "流式跨 chunk 邮箱",
         stream_escape(["user@exam", "ple.com 好"]),
-        "user@example\\.com 好",
+        with_zw("user@example\\.com 好"),
     )
     check(
         "流式跨 chunk IPv6",
         stream_escape(["2001:db", "8::1 好"]),
-        "2001\\:db8\\:\\:1 好",
+        with_zw("2001\\:db8\\:\\:1 好"),
     )
     check(
         "流式末尾无边界",
         stream_escape(["example", ".com"]),
-        "example\\.com",
+        with_zw("example\\.com"),
     )
     check(
         "流式普通文本",

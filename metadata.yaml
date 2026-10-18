@@ -1,7 +1,7 @@
 name: astrbot_plugin_linkpass # 插件唯一识别名，必须与插件目录名一致
 display_name: LinkPass · 链接转义 # 用于展示的名字
 desc: "针对指定 UMO 的 AI 回复转义链接：去掉 http(s)://，转义域名/IPv4 的点、IPv6 的冒号、query 的 ? 与邮箱域名，避免被 QQ 群助手拦截。"
-version: v1.0.0 # 插件版本号
+version: v1.1.0 # 插件版本号
 author: cxykevin # 作者
 repo: https://github.com/cxykevin/astrbot_plugin_linkpass # 插件的仓库地址
 astrbot_version: ">=4.0.0" # 依赖 on_decorating_result 钩子
